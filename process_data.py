@@ -4,26 +4,47 @@ import logging
 from decimal import Decimal
 from typing import Dict, Tuple, List
 from collections import defaultdict
+
 from validation import FIELD_NAMES, validate_row, validate_csv_file
 
 BATCH_SIZE = 100
 
-# Process data for each batch
 def process_batch(batch: List[Tuple[int, Dict[str, str]]], target_date: datetime, precision: int, batch_index: int) -> Tuple[Dict[Tuple[str, str, str], Decimal], int, List[str]]:
+    """
+    Processes a batch of vesting events from a CSV file.
+
+    This function validates and processes each row in the given batch. For valid rows, it aggregates
+    the vesting or cancellation events based on the target date and updates the event quantities.
+    For invalid rows, it logs error messages for later review.
+
+    Args:
+        batch (List[Tuple[int, Dict[str, str]]]): A batch of CSV rows, where each row is represented by 
+            a tuple containing the row index and a dictionary of row data.
+        target_date (datetime): The cutoff date; only events that occur on or before this date are considered.
+        precision (int): The decimal precision to apply to share amounts.
+        batch_index (int): The index of the current batch being processed.
+
+    Returns:
+        Tuple[Dict[Tuple[str, str, str], Decimal], int, List[str]]:
+            - A dictionary of events where the key is a tuple (emp_id, emp_name, award_id) and the value is the aggregated quantity (Decimal).
+            - The count of errors encountered in this batch (int).
+            - A list of error messages encountered during processing (List[str]).
+
+    Raises:
+        ValueError: If row validation fails, specific error messages will be returned in error messages.
+    """
     events = defaultdict(Decimal)
     error_count = 0
     error_messages = []
     for index, row in batch:
-        # validate and parse row data
+
         validated_row = validate_row(row, batch_index * BATCH_SIZE + index, precision)
 
-        # row data is not valid: add warning messages to error_messsages for later log
         if isinstance(validated_row,str):
             error_count += 1
             error_messages.append(validated_row)
             continue
 
-        # row data is valid for processing
         event_type, emp_id, emp_name, award_id, event_date, quantity = validated_row.values()
 
         key = (emp_id, emp_name, award_id)
@@ -38,8 +59,27 @@ def process_batch(batch: List[Tuple[int, Dict[str, str]]], target_date: datetime
 
     return dict(events), error_count, error_messages
 
-# Process CSV file into aggregated vesting events
+
 def process_csv(file: str, target_date: datetime, precision: int) -> Dict[Tuple[str, str, str], Decimal]:
+    """
+    Processes a CSV file and aggregates vesting events based on the target date.
+
+    This function reads a CSV file containing vesting event data, processes it in batches, and aggregates
+    the vesting and cancellation quantities by employee and award. The aggregation considers only events
+    on or before the target date. Invalid rows are logged, and errors are counted and reported.
+
+    Args:
+        file (str): Path to the CSV file to be processed.
+        target_date (datetime): The cutoff date; only events on or before this date are considered.
+        precision (int): The decimal precision to apply to share amounts.
+
+    Returns:
+        Dict[Tuple[str, str, str], Decimal]: A dictionary where the key is a tuple (emp_id, emp_name, award_id)
+            and the value is the aggregated quantity (Decimal).
+
+    Logs:
+        Warnings are logged for any invalid rows, including error messages and line numbers.
+    """
     events = defaultdict(Decimal)
     error_count = 0
     error_messages = []
@@ -63,7 +103,6 @@ def process_csv(file: str, target_date: datetime, precision: int) -> Dict[Tuple[
                 batch_index += 1
                 batch = []
 
-        # Process any remaining rows in the last batch
         if batch:
             batch_events, error_count_batch, error_messages_batch = process_batch(batch, target_date, precision, batch_index)
 
@@ -72,7 +111,6 @@ def process_csv(file: str, target_date: datetime, precision: int) -> Dict[Tuple[
             error_count += error_count_batch
             error_messages += error_messages_batch
 
-    # log warning about all invalid rows with total count, reason and index
     if error_count > 0:
         logging.warning(f"Total Lines Skipped: {error_count}. Please check the following messages.")
         for message in error_messages:
